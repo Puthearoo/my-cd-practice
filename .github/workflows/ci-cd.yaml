@@ -1,0 +1,23 @@
+name: CI/CD Pipeline
+on:
+  push:
+    branches: [ test-usersView ]
+  pull_request:
+    branches: [ test-usersView ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Print initial message
+      run: |
+        echo "Hello, GitHub Actions!"
+        ls -la
+
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Print message after checkout
+      run: |
+        echo "Hello, GitHub Actions!"
+        ls -la
