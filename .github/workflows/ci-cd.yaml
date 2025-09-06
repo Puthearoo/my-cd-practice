@@ -1,0 +1,82 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [test-workflow] # Changed to match your actual branch
+  pull_request:
+    branches: [test-workflow] # Changed to match your actual branch
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Debug - Show project structure
+        run: |
+          echo "Project structure:"
+          ls -la
+          echo "Backend contents:"
+          ls -la my-cicd-backend/
+          echo "Frontend contents:"
+          ls -la my-cicd-frontend/
+
+      # SSH Deployment to your server
+      - name: Deploy to Server via SSH
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ vars.SERVER_IP }}
+          username: ${{ vars.USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            echo "🚀 Starting deployment..."
+
+            # Create project directory
+            sudo mkdir -p /var/www/my-app
+            sudo mkdir -p /var/www/my-app/backend
+            sudo mkdir -p /var/www/my-app/frontend
+
+            # Copy frontend files
+            echo "📦 Deploying frontend..."
+            sudo cp -r $GITHUB_WORKSPACE/my-cicd-frontend/* /var/www/my-app/frontend/
+
+            # Copy backend files  
+            echo "📦 Deploying backend..."
+            sudo cp -r $GITHUB_WORKSPACE/my-cicd-backend/* /var/www/my-app/backend/
+
+            # Install Python dependencies
+            echo "🐍 Installing dependencies..."
+            cd /var/www/my-app/backend
+            sudo pip3 install -r requirements.txt
+
+            # Configure Nginx
+            echo "🌐 Setting up Nginx..."
+            sudo bash -c 'cat > /etc/nginx/sites-available/my-app << EOF
+            server {
+                listen 80;
+                server_name _;
+                root /var/www/my-app/frontend;
+                index index.html;
+                
+                location / {
+                    try_files \$uri \$uri/ =404;
+                }
+                
+                location /api {
+                    proxy_pass http://localhost:5000;
+                    proxy_set_header Host \$host;
+                }
+            }
+            EOF'
+
+            # Enable site and restart Nginx
+            sudo ln -sf /etc/nginx/sites-available/my-app /etc/nginx/sites-enabled/
+            sudo nginx -t && sudo systemctl restart nginx
+
+            # Start backend application
+            echo "🔧 Starting backend..."
+            cd /var/www/my-app/backend
+            sudo python3 app.py &
+
+            echo "✅ Deployment completed! Visit: http://${{ vars.SERVER_IP }}"
