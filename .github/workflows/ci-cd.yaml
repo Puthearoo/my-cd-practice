@@ -2,13 +2,21 @@ name: Frontend CI/CD with Ngrok
 
 on:
   push:
-    branches: [test-workflow]
+    branches: [main, master, develop]
   pull_request:
-    branches: [test-workflow]
+    branches: [main, master, develop]
+
+env:
+  APP_DIR: "/var/www/my-app"
+  FRONTEND_DIR: "${{ env.APP_DIR }}/frontend"
+  FRONTEND_PORT: 3000
 
 jobs:
   deploy-frontend:
     runs-on: ubuntu-latest
+    # Only deploy on push to main branches, not on pull requests
+    if: github.event_name == 'push' && (contains(github.ref, 'main') || contains(github.ref, 'master') || contains(github.ref, 'develop'))
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -17,8 +25,45 @@ jobs:
         run: |
           echo "Project structure:"
           ls -la
-          echo "Frontend contents:"
-          ls -la my-cicd-frontend/
+          if [ -d "frontend" ]; then
+            echo "Frontend contents:"
+            ls -la frontend/
+          elif [ -d "my-cicd-frontend" ]; then
+            echo "Frontend contents:"
+            ls -la my-cicd-frontend/
+          else
+            echo "No frontend directory found. Available directories:"
+            find . -maxdepth 1 -type d -name "*frontend*" -o -name "*web*" -o -name "*app*" | head -10
+          fi
+
+      - name: Validate frontend directory
+        id: check-frontend
+        run: |
+          if [ -d "frontend" ]; then
+            echo "FRONTEND_DIR=frontend" >> $GITHUB_OUTPUT
+          elif [ -d "my-cicd-frontend" ]; then
+            echo "FRONTEND_DIR=my-cicd-frontend" >> $GITHUB_OUTPUT
+          else
+            echo "Could not find frontend directory"
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: ${{ steps.check-frontend.outputs.FRONTEND_DIR }}/package-lock.json
+
+      - name: Install frontend dependencies
+        run: |
+          cd ${{ steps.check-frontend.outputs.FRONTEND_DIR }}
+          npm ci
+
+      - name: Build frontend
+        run: |
+          cd ${{ steps.check-frontend.outputs.FRONTEND_DIR }}
+          npm run build
 
       - name: Deploy Frontend to Server via SSH (with Ngrok)
         uses: appleboy/ssh-action@v0.1.10
@@ -26,35 +71,44 @@ jobs:
           host: ${{ vars.SERVER_IP }}
           username: ${{ vars.USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ vars.SSH_PORT }}   # default 22 if not set
+          port: ${{ vars.SSH_PORT }}
           script: |
+            set -e  # Exit on error
+
             echo "🚀 Starting frontend deployment with Ngrok..."
 
-            APP_DIR="/var/www/my-app"
-            FRONTEND_DIR="$APP_DIR/frontend"
-            FRONTEND_PORT=3000
-            NGROK_TOKEN="${{ secrets.NGROK_AUTH_TOKEN }}"
-
-            # Prepare frontend directory
+            # Create application directory
             sudo mkdir -p "$FRONTEND_DIR"
 
-            echo "📦 Deploying frontend..."
-            sudo cp -r $GITHUB_WORKSPACE/my-cicd-frontend/* "$FRONTEND_DIR/"
-
-            # Install a simple web server (if not already)
-            if ! command -v npx &> /dev/null; then
+            # Install Node.js if not present
+            if ! command -v node &> /dev/null; then
               echo "⬇️ Installing Node.js..."
               curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-              sudo apt install -y nodejs
+              sudo apt-get install -y nodejs
             fi
 
-            # Kill old frontend server if running
-            sudo pkill -f "npx serve" || true
+            # Install serve if not present
+            if ! command -v npx &> /dev/null || ! npx serve --version &> /dev/null; then
+              echo "⬇️ Installing serve package..."
+              sudo npm install -g serve
+            fi
+
+            # Kill any existing frontend processes
+            echo "🛑 Stopping any existing frontend servers..."
+            sudo pkill -f "serve.*$FRONTEND_PORT" || true
+            sleep 2
+
+            # Copy built files to server
+            echo "📦 Copying frontend files to server..."
+            sudo rm -rf "$FRONTEND_DIR/*"
+            sudo cp -r $GITHUB_WORKSPACE/${{ steps.check-frontend.outputs.FRONTEND_DIR }}/build/* "$FRONTEND_DIR/"
+            sudo chown -R $USER:$USER "$FRONTEND_DIR"
 
             # Start frontend server
             echo "🔧 Starting frontend on port $FRONTEND_PORT..."
             cd "$FRONTEND_DIR"
-            nohup npx serve -s . -l $FRONTEND_PORT > frontend.log 2>&1 &
+            nohup serve -s . -l $FRONTEND_PORT > frontend.log 2>&1 &
+            echo "Frontend server started. Logs available at: $FRONTEND_DIR/frontend.log"
 
             # Install Ngrok if missing
             if ! command -v ngrok &> /dev/null; then
@@ -67,17 +121,38 @@ jobs:
             fi
 
             # Configure Ngrok
-            ngrok config add-authtoken "$NGROK_TOKEN"
+            ngrok config add-authtoken "${{ secrets.NGROK_AUTH_TOKEN }}" || true
 
             # Kill old Ngrok if running
+            echo "🛑 Stopping any existing Ngrok tunnels..."
             sudo pkill -f "ngrok" || true
+            sleep 2
 
             # Start Ngrok tunnel for frontend
-            echo "🌐 Starting Ngrok..."
+            echo "🌐 Starting Ngrok tunnel..."
             nohup ngrok http $FRONTEND_PORT --log=stdout > ngrok.log 2>&1 &
 
-            sleep 5
+            # Wait for Ngrok to start
+            sleep 7
 
             # Get Ngrok Public URL
-            NGROK_URL=$(curl --silent http://127.0.0.1:4040/api/tunnels | grep -o 'https://[^"]*' | head -n 1)
-            echo "✅ Frontend exposed at: $NGROK_URL"
+            NGROK_URL=$(curl --silent --max-time 10 http://127.0.0.1:4040/api/tunnels | grep -o 'https://[^"]*' | head -n 1)
+
+            if [ -n "$NGROK_URL" ]; then
+              echo "✅ Frontend successfully deployed and exposed at: $NGROK_URL"
+              echo "::notice::Frontend deployed successfully! Access it at: $NGROK_URL"
+            else
+              echo "⚠️  Frontend deployed but could not retrieve Ngrok URL. Check ngrok.log for details."
+              echo "::warning::Frontend deployed but could not retrieve Ngrok URL"
+            fi
+
+      - name: Notify deployment status
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Deployment completed successfully!"
+            # Add notification logic here (Slack, Discord, Email, etc.)
+          else
+            echo "❌ Deployment failed!"
+            # Add failure notification logic here
+          fi
