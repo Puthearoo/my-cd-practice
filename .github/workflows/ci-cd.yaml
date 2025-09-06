@@ -6,9 +6,14 @@ on:
   pull_request:
     branches: [test-workflow]
 
+env:
+  APP_DIR: "/var/www/my-app"
+  FRONTEND_DIR: "${{ env.APP_DIR }}/frontend"
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -17,45 +22,88 @@ jobs:
         run: |
           echo "Project structure:"
           ls -la
-          echo "Frontend contents:"
-          ls -la my-cicd-frontend/
+          if [ -d "my-cicd-frontend" ]; then
+            echo "Frontend contents:"
+            ls -la my-cicd-frontend/
+          else
+            echo "ERROR: my-cicd-frontend directory not found!"
+            echo "Available directories:"
+            find . -maxdepth 1 -type d | grep -v "^\." | head -10
+            exit 1
+          fi
 
-      # SSH Deployment to your server
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: my-cicd-frontend/package-lock.json
+
+      - name: Install and build frontend
+        run: |
+          cd my-cicd-frontend
+          npm ci
+          npm run build
+
       - name: Deploy Frontend via SSH
         uses: appleboy/ssh-action@v0.1.10
         with:
           host: ${{ vars.SERVER_IP }}
           username: ${{ vars.USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ vars.SSH_PORT }} # default 22 if not set
+          port: ${{ vars.SSH_PORT }}
           script: |
+            set -e  # Exit on any error
+
             echo "🚀 Starting frontend deployment..."
 
             # Create project directory
-            sudo mkdir -p /var/www/my-app/frontend
+            sudo mkdir -p $FRONTEND_DIR
 
-            # Copy frontend files
-            echo "📦 Deploying frontend..."
-            sudo cp -r $GITHUB_WORKSPACE/my-cicd-frontend/* /var/www/my-app/frontend/
+            # Install Nginx if not installed
+            if ! command -v nginx &> /dev/null; then
+              echo "📦 Installing Nginx..."
+              sudo apt update
+              sudo apt install -y nginx
+            fi
 
-            # Configure Nginx to serve frontend only
+            # Copy built frontend files
+            echo "📦 Copying frontend files..."
+            sudo rm -rf $FRONTEND_DIR/*
+            sudo cp -r $GITHUB_WORKSPACE/my-cicd-frontend/build/* $FRONTEND_DIR/
+            sudo chown -R www-data:www-data $FRONTEND_DIR
+
+            # Configure Nginx
             echo "🌐 Setting up Nginx..."
             sudo bash -c 'cat > /etc/nginx/sites-available/my-app << EOF
             server {
                 listen 80;
                 server_name _;
-
-                root /var/www/my-app/frontend;
+                root '"$FRONTEND_DIR"';
                 index index.html;
-
+                
+                # Frontend routing support
                 location / {
-                    try_files \$uri /index.html;
+                    try_files \$uri \$uri/ /index.html;
                 }
+                
+                # Security headers
+                add_header X-Frame-Options "SAMEORIGIN" always;
+                add_header X-XSS-Protection "1; mode=block" always;
+                add_header X-Content-Type-Options "nosniff" always;
             }
             EOF'
 
-            # Enable site and restart Nginx
+            # Enable site
             sudo ln -sf /etc/nginx/sites-available/my-app /etc/nginx/sites-enabled/
-            sudo nginx -t && sudo systemctl restart nginx
+            sudo rm -f /etc/nginx/sites-enabled/default  # Remove default config
 
-            echo "✅ Frontend deployment completed! Visit: http://${{ vars.SERVER_IP }}"
+            # Test and restart Nginx
+            echo "🔧 Testing Nginx configuration..."
+            sudo nginx -t
+            echo "🔄 Restarting Nginx..."
+            sudo systemctl restart nginx
+
+            echo "✅ Frontend deployment completed!"
+            echo "🌐 Visit: http://${{ vars.SERVER_IP }}"
+            echo "📁 Files deployed to: $FRONTEND_DIR"
