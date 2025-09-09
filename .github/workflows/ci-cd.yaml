@@ -12,67 +12,43 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Debug project structure
+      - name: Find HTML files
         run: |
-          echo "📁 Project structure:"
+          echo "🔍 Searching for HTML files..."
+          echo "📁 Current directory structure:"
           ls -la
-          echo "📁 Frontend contents:"
-          if [ -d "my-cicd-frontend" ]; then
-            ls -la my-cicd-frontend/
-          else
-            echo "❌ my-cicd-frontend directory not found!"
-            echo "Available files:"
-            find . -maxdepth 2 -type f -name "*.html" || echo "No HTML files found"
+
+          # Find all HTML files
+          HTML_FILES=$(find . -name "*.html" -type f)
+          echo "📄 Found HTML files:"
+          echo "$HTML_FILES"
+
+          if [ -z "$HTML_FILES" ]; then
+            echo "❌ No HTML files found in the repository!"
             exit 1
           fi
 
-      - name: Validate HTML file
-        run: |
-          if [ -f "my-cicd-frontend/index.html" ]; then
-            echo "✅ index.html found!"
-            # Check if HTML has basic structure
-            if grep -q "<!DOCTYPE html>" "my-cicd-frontend/index.html"; then
-              echo "✅ Valid HTML structure"
-            else
-              echo "⚠️  Missing DOCTYPE, but will deploy anyway"
-            fi
-          else
-            echo "❌ index.html not found in my-cicd-frontend/"
-            echo "Looking for HTML files..."
-            find . -name "*.html" -type f
-            exit 1
-          fi
+          # Use the first HTML file found
+          MAIN_HTML=$(echo "$HTML_FILES" | head -1)
+          echo "🎯 Using HTML file: $MAIN_HTML"
+          echo "HTML_DIR=$(dirname $MAIN_HTML)" >> $GITHUB_ENV
 
       - name: Create deployment package
         run: |
-          # Create a clean deployment folder
-          mkdir -p deploy-package
-
-          # Copy all HTML, CSS, JS, and image files
-          cp -r my-cicd-frontend/* deploy-package/ 2>/dev/null || true
-
-          # If my-cicd-frontend doesn't exist, look for HTML files in root
-          if [ ! -d "my-cicd-frontend" ]; then
-            echo "📁 Copying HTML files from root directory"
-            cp *.html deploy-package/ 2>/dev/null || true
-            cp *.css deploy-package/ 2>/dev/null || true
-            cp *.js deploy-package/ 2>/dev/null || true
-          fi
-
-          # Create tar package
-          tar -czf frontend.tar.gz -C deploy-package .
-          echo "📦 Created deployment package:"
+          echo "📦 Creating package from: $HTML_DIR"
+          tar -czf frontend.tar.gz -C $HTML_DIR .
+          echo "✅ Package created:"
           ls -la frontend.tar.gz
 
       - name: Test SSH connection
         uses: appleboy/ssh-action@v0.1.10
         with:
-          host: ${{ vars.SSM_NOST }} # Using your variable name
+          host: ${{ vars.SSM_NOST }}
           username: ${{ vars.USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ vars.SSM_NORT }}
           script: |
-            echo "✅ SSH Connection successful!"
+            echo "✅ SSH Connection successful to ${{ vars.SSM_NOST }}!"
             echo "📁 Preparing server directory: /var/www/my-app"
             sudo mkdir -p /var/www/my-app
             sudo chown -R $USER:$USER /var/www/my-app
@@ -87,7 +63,6 @@ jobs:
           port: ${{ vars.SSM_NORT }}
           source: "frontend.tar.gz"
           target: "/tmp/"
-          strip_components: 1
 
       - name: Deploy to web server
         uses: appleboy/ssh-action@v0.1.10
@@ -97,7 +72,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ vars.SSM_NORT }}
           script: |
-            set -e  # Exit on error
+            set -e
 
             WEB_DIR="/var/www/my-app"
             echo "🚀 Deploying to: $WEB_DIR"
@@ -129,7 +104,6 @@ jobs:
             echo "📁 Deployed files:"
             ls -la $WEB_DIR/
             echo "🌐 Your website is now live at: http://${{ vars.SSM_NOST }}"
-            echo "🎉 CI/CD Deployment Successful!"
 
       - name: Verify deployment
         run: |
@@ -139,3 +113,4 @@ jobs:
           echo "🖥️  Server IP: ${{ vars.SSM_NOST }}"
           echo "👤 Username: ${{ vars.USERNAME }}"
           echo "🚀 Your HTML site is now deployed!"
+          echo "✅ CI/CD Deployment Successful!"
