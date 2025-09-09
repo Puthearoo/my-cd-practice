@@ -1,109 +1,141 @@
-name: CI/CD Frontend Only
+name: CI/CD HTML Deployment
 
 on:
   push:
     branches: [test-workflow]
-  pull_request:
-    branches: [test-workflow]
-
-env:
-  APP_DIR: "/var/www/my-app"
-  FRONTEND_DIR: "${{ env.APP_DIR }}/frontend"
 
 jobs:
-  build-and-deploy:
+  deploy-html:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Debug - Show project structure
+      - name: Debug project structure
         run: |
-          echo "Project structure:"
+          echo "📁 Project structure:"
           ls -la
+          echo "📁 Frontend contents:"
           if [ -d "my-cicd-frontend" ]; then
-            echo "Frontend contents:"
             ls -la my-cicd-frontend/
           else
-            echo "ERROR: my-cicd-frontend directory not found!"
-            echo "Available directories:"
-            find . -maxdepth 1 -type d | grep -v "^\." | head -10
+            echo "❌ my-cicd-frontend directory not found!"
+            echo "Available files:"
+            find . -maxdepth 2 -type f -name "*.html" || echo "No HTML files found"
             exit 1
           fi
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: "18"
-          cache: "npm"
-          cache-dependency-path: my-cicd-frontend/package-lock.json
-
-      - name: Install and build frontend
+      - name: Validate HTML file
         run: |
-          cd my-cicd-frontend
-          npm ci
-          npm run build
+          if [ -f "my-cicd-frontend/index.html" ]; then
+            echo "✅ index.html found!"
+            # Check if HTML has basic structure
+            if grep -q "<!DOCTYPE html>" "my-cicd-frontend/index.html"; then
+              echo "✅ Valid HTML structure"
+            else
+              echo "⚠️  Missing DOCTYPE, but will deploy anyway"
+            fi
+          else
+            echo "❌ index.html not found in my-cicd-frontend/"
+            echo "Looking for HTML files..."
+            find . -name "*.html" -type f
+            exit 1
+          fi
 
-      - name: Deploy Frontend via SSH
+      - name: Create deployment package
+        run: |
+          # Create a clean deployment folder
+          mkdir -p deploy-package
+
+          # Copy all HTML, CSS, JS, and image files
+          cp -r my-cicd-frontend/* deploy-package/ 2>/dev/null || true
+
+          # If my-cicd-frontend doesn't exist, look for HTML files in root
+          if [ ! -d "my-cicd-frontend" ]; then
+            echo "📁 Copying HTML files from root directory"
+            cp *.html deploy-package/ 2>/dev/null || true
+            cp *.css deploy-package/ 2>/dev/null || true
+            cp *.js deploy-package/ 2>/dev/null || true
+          fi
+
+          # Create tar package
+          tar -czf frontend.tar.gz -C deploy-package .
+          echo "📦 Created deployment package:"
+          ls -la frontend.tar.gz
+
+      - name: Test SSH connection
         uses: appleboy/ssh-action@v0.1.10
         with:
-          host: ${{ vars.SERVER_IP }}
+          host: ${{ vars.SSM_NOST }} # Using your variable name
           username: ${{ vars.USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ vars.SSH_PORT }}
+          port: ${{ vars.SSM_NORT }}
           script: |
-            set -e  # Exit on any error
+            echo "✅ SSH Connection successful!"
+            echo "📁 Preparing server directory: /var/www/my-app"
+            sudo mkdir -p /var/www/my-app
+            sudo chown -R $USER:$USER /var/www/my-app
+            echo "Server ready for deployment 🚀"
 
-            echo "🚀 Starting frontend deployment..."
+      - name: Transfer files to server
+        uses: appleboy/scp-action@v0.1.4
+        with:
+          host: ${{ vars.SSM_NOST }}
+          username: ${{ vars.USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ vars.SSM_NORT }}
+          source: "frontend.tar.gz"
+          target: "/tmp/"
+          strip_components: 1
 
-            # Create project directory
-            sudo mkdir -p $FRONTEND_DIR
+      - name: Deploy to web server
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ vars.SSM_NOST }}
+          username: ${{ vars.USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ vars.SSM_NORT }}
+          script: |
+            set -e  # Exit on error
 
-            # Install Nginx if not installed
-            if ! command -v nginx &> /dev/null; then
-              echo "📦 Installing Nginx..."
-              sudo apt update
-              sudo apt install -y nginx
+            WEB_DIR="/var/www/my-app"
+            echo "🚀 Deploying to: $WEB_DIR"
+
+            # Create backup if exists
+            if [ -d "$WEB_DIR" ] && [ "$(ls -A $WEB_DIR)" ]; then
+              echo "📦 Creating backup..."
+              BACKUP_DIR="/var/www/backups/$(date +%Y%m%d_%H%M%S)"
+              mkdir -p "$BACKUP_DIR"
+              cp -r $WEB_DIR/* "$BACKUP_DIR"/
+              echo "✅ Backup created at: $BACKUP_DIR"
             fi
 
-            # Copy built frontend files
-            echo "📦 Copying frontend files..."
-            sudo rm -rf $FRONTEND_DIR/*
-            sudo cp -r $GITHUB_WORKSPACE/my-cicd-frontend/build/* $FRONTEND_DIR/
-            sudo chown -R www-data:www-data $FRONTEND_DIR
+            # Clean deployment directory
+            rm -rf $WEB_DIR/*
 
-            # Configure Nginx
-            echo "🌐 Setting up Nginx..."
-            sudo bash -c 'cat > /etc/nginx/sites-available/my-app << EOF
-            server {
-                listen 80;
-                server_name _;
-                root '"$FRONTEND_DIR"';
-                index index.html;
-                
-                # Frontend routing support
-                location / {
-                    try_files \$uri \$uri/ /index.html;
-                }
-                
-                # Security headers
-                add_header X-Frame-Options "SAMEORIGIN" always;
-                add_header X-XSS-Protection "1; mode=block" always;
-                add_header X-Content-Type-Options "nosniff" always;
-            }
-            EOF'
+            # Extract new files
+            echo "📤 Extracting new version..."
+            tar -xzf /tmp/frontend.tar.gz -C $WEB_DIR/
 
-            # Enable site
-            sudo ln -sf /etc/nginx/sites-available/my-app /etc/nginx/sites-enabled/
-            sudo rm -f /etc/nginx/sites-enabled/default  # Remove default config
+            # Set proper permissions
+            chmod -R 755 $WEB_DIR
+            chown -R $USER:$USER $WEB_DIR
 
-            # Test and restart Nginx
-            echo "🔧 Testing Nginx configuration..."
-            sudo nginx -t
-            echo "🔄 Restarting Nginx..."
-            sudo systemctl restart nginx
+            # Cleanup temporary files
+            rm -f /tmp/frontend.tar.gz
 
-            echo "✅ Frontend deployment completed!"
-            echo "🌐 Visit: http://${{ vars.SERVER_IP }}"
-            echo "📁 Files deployed to: $FRONTEND_DIR"
+            echo "✅ Deployment completed successfully!"
+            echo "📁 Deployed files:"
+            ls -la $WEB_DIR/
+            echo "🌐 Your website is now live at: http://${{ vars.SSM_NOST }}"
+            echo "🎉 CI/CD Deployment Successful!"
+
+      - name: Verify deployment
+        run: |
+          echo "🎊 Deployment workflow completed!"
+          echo "-----------------------------------"
+          echo "🌐 Website URL: http://${{ vars.SSM_NOST }}"
+          echo "🖥️  Server IP: ${{ vars.SSM_NOST }}"
+          echo "👤 Username: ${{ vars.USERNAME }}"
+          echo "🚀 Your HTML site is now deployed!"
