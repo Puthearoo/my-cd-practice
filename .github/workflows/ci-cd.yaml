@@ -46,8 +46,7 @@ jobs:
           script: |
             echo "✅ SSH Connection successful to ${{ secrets.SSH_HOST }}!"
             echo "📁 Preparing server directory: /var/www/my-app"
-            sudo mkdir -p /var/www/my-app
-            sudo chown -R $USER:$USER /var/www/my-app
+            mkdir -p /var/www/my-app
             echo "Server ready for deployment 🚀"
 
       - name: Transfer files to server
@@ -73,7 +72,7 @@ jobs:
             WEB_DIR="/var/www/my-app"
             echo "🚀 Deploying to: $WEB_DIR"
 
-            # Create backup if exists
+            # Backup existing files
             if [ -d "$WEB_DIR" ] && [ "$(ls -A $WEB_DIR)" ]; then
               echo "📦 Creating backup..."
               BACKUP_DIR="/var/www/backups/$(date +%Y%m%d_%H%M%S)"
@@ -82,30 +81,27 @@ jobs:
               echo "✅ Backup created at: $BACKUP_DIR"
             fi
 
-            # Clean deployment directory
+            # Clean old files
             rm -rf $WEB_DIR/*
 
             # Extract new files
             echo "📤 Extracting new version..."
             tar -xzf /tmp/frontend.tar.gz -C $WEB_DIR/
 
-            # Set proper permissions
+            # Permissions
             chmod -R 755 $WEB_DIR
-            chown -R $USER:$USER $WEB_DIR
+            chown -R $USER:$USER $WEB_DIR || true
 
-            # Cleanup temporary files
+            # Cleanup
             rm -f /tmp/frontend.tar.gz
 
             echo "✅ Deployment completed successfully!"
-            echo "📁 Deployed files:"
-            ls -la $WEB_DIR/
-            echo "🌐 Your website is now live at: http://${{ secrets.SSH_HOST }}"
+            echo "🌐 Website is live at: http://${{ secrets.SSH_HOST }}:${{ secrets.SSH_PORT }}"
 
       - name: Verify deployment
         run: |
           echo "🎊 Deployment workflow completed!"
           echo "-----------------------------------"
-          echo "🌐 Website URL: http://${{ secrets.SSH_HOST }}"
-          echo "🖥️  Server IP: ${{ secrets.SSH_HOST }}"
+          echo "🌐 Website URL: http://${{ secrets.SSH_HOST }}:${{ secrets.SSH_PORT }}"
           echo "👤 Username: ${{ secrets.SSH_USER }}"
           echo "✅ CI/CD Deployment Successful!"
