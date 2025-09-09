@@ -39,12 +39,12 @@ jobs:
       - name: Test SSH connection
         uses: appleboy/ssh-action@v0.1.10
         with:
-          host: ${{ vars.SSM_NOST }}
-          username: ${{ vars.USERNAME }}
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ vars.SSM_NORT }}
+          port: ${{ secrets.SSH_PORT }}
           script: |
-            echo "✅ SSH Connection successful to ${{ vars.SSM_NOST }}!"
+            echo "✅ SSH Connection successful to ${{ secrets.SSH_HOST }}!"
             echo "📁 Preparing server directory: /var/www/my-app"
             sudo mkdir -p /var/www/my-app
             sudo chown -R $USER:$USER /var/www/my-app
@@ -53,20 +53,20 @@ jobs:
       - name: Transfer files to server
         uses: appleboy/scp-action@v0.1.4
         with:
-          host: ${{ vars.SSM_NOST }}
-          username: ${{ vars.USERNAME }}
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ vars.SSM_NORT }}
+          port: ${{ secrets.SSH_PORT }}
           source: "frontend.tar.gz"
           target: "/tmp/"
 
       - name: Deploy to web server
         uses: appleboy/ssh-action@v0.1.10
         with:
-          host: ${{ vars.SSM_NOST }}
-          username: ${{ vars.USERNAME }}
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ vars.SSM_NORT }}
+          port: ${{ secrets.SSH_PORT }}
           script: |
             set -e
 
@@ -99,14 +99,13 @@ jobs:
             echo "✅ Deployment completed successfully!"
             echo "📁 Deployed files:"
             ls -la $WEB_DIR/
-            echo "🌐 Your website is now live at: http://${{ vars.SSM_NOST }}"
+            echo "🌐 Your website is now live at: http://${{ secrets.SSH_HOST }}"
 
       - name: Verify deployment
         run: |
           echo "🎊 Deployment workflow completed!"
           echo "-----------------------------------"
-          echo "🌐 Website URL: http://${{ vars.SSM_NOST }}"
-          echo "🖥️  Server IP: ${{ vars.SSM_NOST }}"
-          echo "👤 Username: ${{ vars.USERNAME }}"
-          echo "🚀 Your HTML site is now deployed!"
+          echo "🌐 Website URL: http://${{ secrets.SSH_HOST }}"
+          echo "🖥️  Server IP: ${{ secrets.SSH_HOST }}"
+          echo "👤 Username: ${{ secrets.SSH_USER }}"
           echo "✅ CI/CD Deployment Successful!"
