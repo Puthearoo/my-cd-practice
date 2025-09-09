@@ -73,33 +73,34 @@ jobs:
             echo "🚀 Deploying to: $WEB_DIR"
 
             # Ensure target directory exists
-            mkdir -p $WEB_DIR
+            sudo mkdir -p $WEB_DIR
 
             # Backup existing files
             if [ -d "$WEB_DIR" ] && [ "$(ls -A $WEB_DIR)" ]; then
               echo "📦 Creating backup..."
               BACKUP_DIR="/var/www/backups/$(date +%Y%m%d_%H%M%S)"
-              mkdir -p "$BACKUP_DIR"
-              cp -r $WEB_DIR/* "$BACKUP_DIR"/
+              sudo mkdir -p "$BACKUP_DIR"
+              sudo cp -r $WEB_DIR/* "$BACKUP_DIR"/
               echo "✅ Backup created at: $BACKUP_DIR"
             fi
 
             # Clean old files
-            rm -rf $WEB_DIR/*
+            sudo rm -rf $WEB_DIR/*
 
             # Extract new files
             echo "📤 Extracting new version..."
-            tar -xzf /tmp/frontend.tar.gz -C $WEB_DIR/
+            sudo tar -xzf /tmp/frontend.tar.gz -C $WEB_DIR/
 
             # Permissions
-            chmod -R 755 $WEB_DIR
-            chown -R $USER:$USER $WEB_DIR || true
+            sudo chmod -R 755 $WEB_DIR
+            sudo chown -R $USER:$USER $WEB_DIR || true
 
             # Cleanup
             rm -f /tmp/frontend.tar.gz
 
             echo "✅ Deployment completed successfully!"
             echo "🌐 Website is live at: http://${{ secrets.SSH_HOST }}:${{ secrets.SSH_PORT }}"
+
       - name: Verify deployment
         run: |
           echo "🎊 Deployment workflow completed!"
