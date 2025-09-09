@@ -12,31 +12,27 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Find HTML files
+      - name: Verify HTML file exists
         run: |
-          echo "🔍 Searching for HTML files..."
           echo "📁 Current directory structure:"
           ls -la
+          echo "📄 Looking for HTML files..."
 
-          # Find all HTML files
-          HTML_FILES=$(find . -name "*.html" -type f)
-          echo "📄 Found HTML files:"
-          echo "$HTML_FILES"
-
-          if [ -z "$HTML_FILES" ]; then
-            echo "❌ No HTML files found in the repository!"
+          if [ -f "index.html" ]; then
+            echo "✅ Found index.html in root directory!"
+            echo "HTML_DIR=." >> $GITHUB_ENV
+          else
+            echo "❌ index.html not found in root directory"
+            echo "Available files:"
+            find . -name "*.html" -type f
             exit 1
           fi
 
-          # Use the first HTML file found
-          MAIN_HTML=$(echo "$HTML_FILES" | head -1)
-          echo "🎯 Using HTML file: $MAIN_HTML"
-          echo "HTML_DIR=$(dirname $MAIN_HTML)" >> $GITHUB_ENV
-
       - name: Create deployment package
         run: |
-          echo "📦 Creating package from: $HTML_DIR"
-          tar -czf frontend.tar.gz -C $HTML_DIR .
+          echo "📦 Packaging files from: $HTML_DIR"
+          tar -czf frontend.tar.gz index.html *.css *.js 2>/dev/null || \
+          (echo "Packaging only HTML file" && tar -czf frontend.tar.gz index.html)
           echo "✅ Package created:"
           ls -la frontend.tar.gz
 
