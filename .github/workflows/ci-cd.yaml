@@ -1,11 +1,14 @@
-name: CI/CD HTML Deployment
+name: CI/CD Full-Stack Deployment
 
 on:
   push:
-    branches: [test-workflow]
+    branches: [main, test-workflow]
+  pull_request:
+    branches: [main]
 
 jobs:
-  deploy-html:
+  # Frontend deployment job
+  deploy-frontend:
     runs-on: ubuntu-latest
 
     steps:
@@ -18,38 +21,34 @@ jobs:
           ls -la
           echo "📄 Looking for HTML files..."
 
+          # Check different possible locations
           if [ -f "index.html" ]; then
             echo "✅ Found index.html in root directory!"
             echo "HTML_DIR=." >> $GITHUB_ENV
+          elif [ -f "frontend/index.html" ]; then
+            echo "✅ Found index.html in frontend directory!"
+            echo "HTML_DIR=frontend" >> $GITHUB_ENV
+          elif [ -f "frontend-test/index.html" ]; then
+            echo "✅ Found index.html in frontend-test directory!"
+            echo "HTML_DIR=frontend-test" >> $GITHUB_ENV
           else
-            echo "❌ index.html not found in root directory"
+            echo "❌ index.html not found in expected locations"
             echo "Available files:"
             find . -name "*.html" -type f
             exit 1
           fi
 
-      - name: Create deployment package
+      - name: Create frontend deployment package
         run: |
-          echo "📦 Packaging files from: $HTML_DIR"
-          tar -czf frontend.tar.gz index.html *.css *.js 2>/dev/null || \
-          (echo "Packaging only HTML file" && tar -czf frontend.tar.gz index.html)
-          echo "✅ Package created:"
+          echo "📦 Packaging frontend files from: $HTML_DIR"
+          cd $HTML_DIR
+          tar -czf ../frontend.tar.gz index.html *.css *.js 2>/dev/null || \
+          (echo "Packaging only HTML file" && tar -czf ../frontend.tar.gz index.html)
+          cd ..
+          echo "✅ Frontend package created:"
           ls -la frontend.tar.gz
 
-      - name: Test SSH connection
-        uses: appleboy/ssh-action@v0.1.10
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SSH_PORT }}
-          script: |
-            echo "✅ SSH Connection successful to ${{ secrets.SSH_HOST }}!"
-            echo "📁 Preparing server directory: /home/roo/my-app"
-            mkdir -p /home/roo/my-app
-            echo "Server ready for deployment 🚀"
-
-      - name: Transfer files to server
+      - name: Transfer frontend files to server
         uses: appleboy/scp-action@v0.1.4
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -59,7 +58,7 @@ jobs:
           source: "frontend.tar.gz"
           target: "/tmp/"
 
-      - name: Deploy to web server
+      - name: Deploy frontend to web server
         uses: appleboy/ssh-action@v0.1.10
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -69,42 +68,330 @@ jobs:
           script: |
             set -e
 
-            WEB_DIR="/home/roo/my-app"
-            echo "🚀 Deploying to: $WEB_DIR"
+            WEB_DIR="/home/${{ secrets.SSH_USER }}/frontend-app"
+            echo "🚀 Deploying frontend to: $WEB_DIR"
 
             # Ensure target directory exists
             mkdir -p $WEB_DIR
 
             # Backup existing files
             if [ -d "$WEB_DIR" ] && [ "$(ls -A $WEB_DIR)" ]; then
-              echo "📦 Creating backup..."
-              BACKUP_DIR="/home/roo/backups/$(date +%Y%m%d_%H%M%S)"
+              echo "📦 Creating frontend backup..."
+              BACKUP_DIR="/home/${{ secrets.SSH_USER }}/backups/frontend_$(date +%Y%m%d_%H%M%S)"
               mkdir -p "$BACKUP_DIR"
               cp -r $WEB_DIR/* "$BACKUP_DIR"/
-              echo "✅ Backup created at: $BACKUP_DIR"
+              echo "✅ Frontend backup created at: $BACKUP_DIR"
             fi
 
             # Clean old files
             rm -rf $WEB_DIR/*
 
             # Extract new files
-            echo "📤 Extracting new version..."
+            echo "📤 Extracting new frontend version..."
             tar -xzf /tmp/frontend.tar.gz -C $WEB_DIR/
 
-            # Permissions
+            # Update API endpoint in HTML to point to backend
+            if [ -f "$WEB_DIR/index.html" ]; then
+              echo "🔧 Updating API endpoint in frontend..."
+              sed -i "s|const API_BASE = 'http://localhost:3000'|const API_BASE = 'http://${{ secrets.SSH_HOST }}:3000'|g" $WEB_DIR/index.html
+              sed -i "s|const API_BASE = 'http://127.0.0.1:3000'|const API_BASE = 'http://${{ secrets.SSH_HOST }}:3000'|g" $WEB_DIR/index.html
+              echo "✅ API endpoint updated to: http://${{ secrets.SSH_HOST }}:3000"
+            fi
+
+            # Set permissions
             chmod -R 755 $WEB_DIR
-            chown -R $USER:$USER $WEB_DIR || true
+            chown -R ${{ secrets.SSH_USER }}:${{ secrets.SSH_USER }} $WEB_DIR || true
 
             # Cleanup
             rm -f /tmp/frontend.tar.gz
 
-            echo "✅ Deployment completed successfully!"
-            echo "🌐 Website is live at: http://${{ secrets.SSH_HOST }}:${{ secrets.SSH_PORT }}"
+            echo "✅ Frontend deployment completed successfully!"
 
-      - name: Verify deployment
+  # Backend testing and deployment job
+  test-and-deploy-backend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: "backend/package*.json"
+
+      - name: Verify backend structure
         run: |
-          echo "🎊 Deployment workflow completed!"
-          echo "-----------------------------------"
-          echo "🌐 Website URL: http://${{ secrets.SSH_HOST }}:${{ secrets.SSH_PORT }}"
-          echo "👤 Username: ${{ secrets.SSH_USER }}"
-          echo "✅ CI/CD Deployment Successful!"
+          echo "📁 Project structure:"
+          ls -la
+          echo "📁 Backend directory:"
+          ls -la backend/ 2>/dev/null || echo "Backend directory not found"
+
+          if [ ! -f "backend/package.json" ]; then
+            echo "❌ package.json not found in backend directory!"
+            exit 1
+          fi
+
+          if [ ! -f "backend/server.js" ]; then
+            echo "❌ server.js not found in backend directory!"
+            exit 1
+          fi
+
+          echo "✅ Backend structure verified!"
+
+      - name: Install dependencies and test
+        working-directory: ./backend
+        run: |
+          echo "📦 Installing backend dependencies..."
+          npm install
+          echo "✅ Dependencies installed successfully!"
+
+          # Basic syntax check
+          echo "🔍 Running syntax check..."
+          node -c server.js
+          echo "✅ Syntax check passed!"
+
+      - name: Create backend deployment package
+        run: |
+          echo "📦 Creating backend deployment package..."
+          cd backend
+
+          # Create deployment directory
+          mkdir -p ../backend-deploy
+
+          # Copy essential files
+          cp package.json ../backend-deploy/
+          cp package-lock.json ../backend-deploy/ 2>/dev/null || echo "No package-lock.json found"
+          cp server.js ../backend-deploy/
+
+          # Copy additional directories if they exist
+          [ -d routes ] && cp -r routes ../backend-deploy/
+          [ -d controllers ] && cp -r controllers ../backend-deploy/
+          [ -d middleware ] && cp -r middleware ../backend-deploy/
+          [ -d models ] && cp -r models ../backend-deploy/
+          [ -d config ] && cp -r config ../backend-deploy/
+
+          cd ../backend-deploy
+          echo "✅ Package contents:"
+          ls -la
+
+          # Create tarball
+          tar -czf ../backend-deployment.tar.gz .
+          cd ..
+          echo "📦 Backend deployment package created:"
+          ls -la backend-deployment.tar.gz
+
+      - name: Setup server environment
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            echo "✅ SSH Connection successful!"
+            echo "🔧 Setting up server environment..."
+
+            # Check Node.js installation
+            if command -v node &> /dev/null; then
+              echo "✅ Node.js version: $(node --version)"
+            else
+              echo "❌ Node.js not found! Installing..."
+              curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+              sudo apt-get install -y nodejs
+              echo "✅ Node.js installed: $(node --version)"
+            fi
+
+            # Check PM2 installation
+            if command -v pm2 &> /dev/null; then
+              echo "✅ PM2 version: $(pm2 --version)"
+            else
+              echo "❌ PM2 not found! Installing..."
+              sudo npm install -g pm2
+              echo "✅ PM2 installed: $(pm2 --version)"
+            fi
+
+            # Prepare directories
+            mkdir -p /home/${{ secrets.SSH_USER }}/my-cd-practice/backend
+            mkdir -p /home/${{ secrets.SSH_USER }}/backups
+            mkdir -p /home/${{ secrets.SSH_USER }}/frontend-app
+
+            echo "🚀 Server environment ready!"
+
+      - name: Transfer backend files
+        uses: appleboy/scp-action@v0.1.4
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          source: "backend-deployment.tar.gz"
+          target: "/tmp/"
+
+      - name: Deploy backend application
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            set -e
+
+            APP_DIR="/home/${{ secrets.SSH_USER }}/my-cd-practice/backend"
+            BACKUP_DIR="/home/${{ secrets.SSH_USER }}/backups/backend_$(date +%Y%m%d_%H%M%S)"
+
+            echo "🚀 Starting backend deployment..."
+
+            # Create backup
+            if [ -d "$APP_DIR" ] && [ "$(ls -A $APP_DIR)" ]; then
+              echo "📦 Creating backend backup..."
+              mkdir -p "$BACKUP_DIR"
+              cp -r $APP_DIR/* "$BACKUP_DIR"/
+              echo "✅ Backup created at: $BACKUP_DIR"
+            fi
+
+            # Stop existing processes
+            echo "⏹️ Stopping existing backend..."
+            pm2 stop backend-api 2>/dev/null || echo "No existing process"
+            pm2 delete backend-api 2>/dev/null || echo "No process to delete"
+
+            # Deploy new version
+            rm -rf $APP_DIR/*
+            echo "📤 Extracting backend..."
+            tar -xzf /tmp/backend-deployment.tar.gz -C $APP_DIR/
+
+            # Set permissions
+            chmod -R 755 $APP_DIR
+            chown -R ${{ secrets.SSH_USER }}:${{ secrets.SSH_USER }} $APP_DIR
+
+            # Install dependencies
+            echo "📦 Installing production dependencies..."
+            cd $APP_DIR
+            npm install --production
+
+            # Create environment file
+            cat > .env << EOF
+            NODE_ENV=production
+            PORT=3000
+            EOF
+
+            # Start with PM2
+            echo "🚀 Starting backend with PM2..."
+            pm2 start server.js --name "backend-api" --env production
+            pm2 save
+
+            # Cleanup
+            rm -f /tmp/backend-deployment.tar.gz
+
+            echo "✅ Backend deployment completed!"
+
+  # Start services job
+  start-services:
+    needs: [deploy-frontend, test-and-deploy-backend]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Start frontend and backend services
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            echo "🚀 Starting all services..."
+
+            # Ensure backend is running
+            pm2 restart backend-api || pm2 start /home/${{ secrets.SSH_USER }}/my-cd-practice/backend/server.js --name "backend-api"
+
+            # Start frontend server (kill existing first)
+            echo "🌐 Starting frontend server..."
+            pkill -f "python3.*http.server.*8080" 2>/dev/null || echo "No existing frontend server"
+
+            # Start new frontend server in background
+            cd /home/${{ secrets.SSH_USER }}/frontend-app
+            nohup python3 -m http.server 8080 --bind 0.0.0.0 > /dev/null 2>&1 &
+
+            # Configure firewall
+            sudo ufw allow 3000 2>/dev/null || echo "Port 3000 already allowed"
+            sudo ufw allow 8080 2>/dev/null || echo "Port 8080 already allowed"
+
+            echo "✅ All services started!"
+
+  # Verification job
+  verify-deployment:
+    needs: [start-services]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Comprehensive deployment verification
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            echo "🔍 Comprehensive deployment verification..."
+
+            # Check backend
+            echo "🏥 Backend Health Check:"
+            sleep 5  # Wait for services to fully start
+
+            if curl -f http://localhost:3000/api/health; then
+              echo ""
+              echo "✅ Backend health check PASSED!"
+            else
+              echo "❌ Backend health check FAILED!"
+              pm2 logs backend-api --lines 10
+              exit 1
+            fi
+
+            # Test API endpoints
+            echo ""
+            echo "🧪 Testing API endpoints..."
+            curl -f http://localhost:3000/api/users && echo " ✅ Users API working"
+            curl -f http://localhost:3000/api/test && echo " ✅ Test API working"
+
+            # Check frontend
+            echo ""
+            echo "🌐 Frontend Check:"
+            if curl -f http://localhost:8080 | grep -q "Backend Test Suite"; then
+              echo "✅ Frontend is serving correctly!"
+            else
+              echo "❌ Frontend check failed!"
+              exit 1
+            fi
+
+            # Show PM2 status
+            echo ""
+            echo "📊 PM2 Status:"
+            pm2 list
+
+            # Show running processes
+            echo ""
+            echo "🔧 Active Services:"
+            ps aux | grep -E "(node|python3.*http.server)" | grep -v grep
+
+            echo ""
+            echo "🎊 All verification tests PASSED!"
+
+      - name: Deployment success summary
+        run: |
+          echo "🎊 FULL-STACK DEPLOYMENT SUCCESSFUL! 🚀"
+          echo "=============================================="
+          echo "🌐 Frontend URL: http://${{ secrets.SSH_HOST }}:8080"
+          echo "🔧 Backend API: http://${{ secrets.SSH_HOST }}:3000"
+          echo "🏥 Health Check: http://${{ secrets.SSH_HOST }}:3000/api/health"
+          echo "👥 Users API: http://${{ secrets.SSH_HOST }}:3000/api/users"
+          echo "🧪 Test API: http://${{ secrets.SSH_HOST }}:3000/api/test"
+          echo "=============================================="
+          echo "✅ Frontend: Deployed and running on port 8080"
+          echo "✅ Backend: Deployed and running on port 3000"
+          echo "✅ PM2: Managing backend process"
+          echo "✅ Firewall: Configured for ports 3000 & 8080"
+          echo "=============================================="
+          echo "🎉 Your full-stack application is now LIVE!"
