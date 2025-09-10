@@ -1,0 +1,45 @@
+name: CI/CD Full-Stack Deployment
+
+on:
+  push:
+    branches: [test-workflow]
+
+jobs:
+  # Frontend Job
+  deploy-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "🚀 Running frontend deployment..."
+      - run: bash .github/scripts/deploy-frontend.sh # (your frontend steps)
+
+  # Backend Job
+  deploy-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "🚀 Running backend deployment..."
+      - run: bash .github/scripts/deploy-backend.sh # (your backend steps)
+
+  # Verification Job
+  verify-deployment:
+    needs: [deploy-frontend, deploy-backend]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify services
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            echo "🔍 Checking backend..."
+            curl -f http://localhost:3000/api/health || (echo "❌ Backend down" && exit 1)
+            echo "✅ Backend running!"
+
+            echo "🔍 Checking frontend..."
+            curl -f http://localhost:8080 || (echo "❌ Frontend down" && exit 1)
+            echo "✅ Frontend running!"
+
+            echo "🎉 Full-stack deployment successful!"
