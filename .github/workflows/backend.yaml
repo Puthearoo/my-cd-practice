@@ -1,32 +1,34 @@
-name: CI/CD Full-Stack Deployment
+name: CI/CD Backend Deployment
 
 on:
   push:
-    branches: [test-workflow]
+    branches: [test-workflow] # adjust branch if needed
 
 jobs:
-  # Frontend Job
-  deploy-frontend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: echo "🚀 Running frontend deployment..."
-      - run: bash .github/scripts/deploy-frontend.sh # (your frontend steps)
-
-  # Backend Job
   deploy-backend:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: echo "🚀 Running backend deployment..."
-      - run: bash .github/scripts/deploy-backend.sh # (your backend steps)
 
-  # Verification Job
-  verify-deployment:
-    needs: [deploy-frontend, deploy-backend]
-    runs-on: ubuntu-latest
     steps:
-      - name: Verify services
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create deployment package
+        run: |
+          echo "📦 Packaging backend files..."
+          tar -czf backend.tar.gz backend/
+          ls -lh backend.tar.gz
+
+      - name: Upload backend package
+        uses: appleboy/scp-action@v0.1.4
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          source: "backend.tar.gz"
+          target: "/tmp/"
+
+      - name: Deploy on server
         uses: appleboy/ssh-action@v0.1.10
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -34,12 +36,28 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
-            echo "🔍 Checking backend..."
-            curl -f http://localhost:3000/api/health || (echo "❌ Backend down" && exit 1)
-            echo "✅ Backend running!"
+            set -e
+            APP_DIR="/home/roo/my-cd-practice/backend"
 
-            echo "🔍 Checking frontend..."
-            curl -f http://localhost:8080 || (echo "❌ Frontend down" && exit 1)
-            echo "✅ Frontend running!"
+            echo "🚀 Deploying backend to $APP_DIR"
 
-            echo "🎉 Full-stack deployment successful!"
+            # Ensure backend directory exists
+            mkdir -p $APP_DIR
+
+            # Clean old files
+            rm -rf $APP_DIR/*
+
+            # Extract new files
+            tar -xzf /tmp/backend.tar.gz -C /home/roo/my-cd-practice
+            rm -f /tmp/backend.tar.gz
+
+            cd $APP_DIR
+
+            echo "📦 Installing dependencies..."
+            npm install --production
+
+            echo "🔄 Restarting backend with PM2..."
+            pm2 delete my-backend || true
+            pm2 start index.js --name my-backend
+
+            echo "✅ Backend deployed successfully!"

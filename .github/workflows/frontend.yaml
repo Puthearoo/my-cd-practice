@@ -1,0 +1,70 @@
+name: CI/CD Frontend Deployment
+
+on:
+  push:
+    branches: [test-workflow] # adjust branch if needed
+
+jobs:
+  deploy-frontend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify HTML files
+        run: |
+          echo "📄 Checking for frontend files..."
+          if [ -f "index.html" ]; then
+            echo "✅ Found index.html in root"
+          else
+            echo "❌ index.html not found, packaging might fail"
+            exit 1
+          fi
+
+      - name: Create deployment package
+        run: |
+          echo "📦 Packaging frontend files..."
+          tar -czf frontend.tar.gz index.html *.css *.js 2>/dev/null || \
+          (echo "Fallback: Packaging only index.html" && tar -czf frontend.tar.gz index.html)
+          ls -lh frontend.tar.gz
+
+      - name: Upload frontend package
+        uses: appleboy/scp-action@v0.1.4
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          source: "frontend.tar.gz"
+          target: "/tmp/"
+
+      - name: Deploy on server
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            set -e
+            FRONT_DIR="/home/roo/frontend-test"
+
+            echo "🚀 Deploying frontend to $FRONT_DIR"
+
+            # Ensure frontend directory exists
+            mkdir -p $FRONT_DIR
+
+            # Clean old files
+            rm -rf $FRONT_DIR/*
+
+            # Extract new files
+            tar -xzf /tmp/frontend.tar.gz -C $FRONT_DIR
+            rm -f /tmp/frontend.tar.gz
+
+            # Permissions
+            chmod -R 755 $FRONT_DIR
+            chown -R $USER:$USER $FRONT_DIR || true
+
+            echo "✅ Frontend deployed successfully!"
+            echo "🌐 Website available at: http://${{ secrets.SSH_HOST }}"
