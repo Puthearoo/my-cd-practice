@@ -12,9 +12,43 @@ let users = [
   { id: 2, name: 'Jane Smith', email: 'jane@example.com' }
 ];
 
-// Routes
-app.get('/api/health', (req, res) => {
+// Basic routes
+app.get('/', (req, res) => {
+  res.json({ message: 'Backend server is running!', timestamp: new Date().toISOString() });
+});
+
+app.get('/health', (req, res) => {
   res.json({ status: 'OK', message: 'Backend is running!' });
+});
+
+// API routes
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'OK', message: 'API is working!', timestamp: new Date().toISOString() });
+});
+
+app.get('/api/test', (req, res) => {
+  res.json({ 
+    message: 'API test endpoint is working!', 
+    timestamp: new Date().toISOString(),
+    status: 'success'
+  });
+});
+
+app.get('/api/data', (req, res) => {
+  res.json({ 
+    message: 'Data endpoint working',
+    data: users,
+    count: users.length,
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.post('/api/data', (req, res) => {
+  res.json({ 
+    message: 'Data received successfully',
+    received: req.body,
+    timestamp: new Date().toISOString()
+  });
 });
 
 app.get('/api/users', (req, res) => {
@@ -37,17 +71,16 @@ app.post('/api/users', (req, res) => {
   res.status(201).json(newUser);
 });
 
-// Add more endpoints as needed...
+// 404 handler for unknown routes
+app.use((req, res) => {
+  res.status(404).json({ error: 'Route not found', path: req.originalUrl });
+});
 
 // Only start server if not in test environment
 if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`Backend server running on port ${PORT}`);
   });
 }
-// Start server
-app.listen(PORT, () => {
-  console.log(`Backend server running on port ${PORT}`);
-});
 
 module.exports = app;
