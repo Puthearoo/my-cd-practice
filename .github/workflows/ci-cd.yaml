@@ -41,12 +41,31 @@ jobs:
       - name: Create frontend deployment package
         run: |
           echo "📦 Packaging frontend files from: $HTML_DIR"
-          cd $HTML_DIR
-          tar -czf ../frontend.tar.gz index.html *.css *.js 2>/dev/null || \
-          (echo "Packaging only HTML file" && tar -czf ../frontend.tar.gz index.html)
+          echo "📄 HTML file: $HTML_FILE"
+
+          # Debug: Show what's in the directory
+          echo "Files in $HTML_DIR:"
+          ls -la "$HTML_DIR"
+
+          # Change to the directory
+          cd "$HTML_DIR"
+
+          # Create package with explicit file inclusion
+          if [ -f "$HTML_FILE" ]; then
+            echo "✅ Creating package with $HTML_FILE"
+            tar -czf ../frontend.tar.gz "$HTML_FILE" *.css *.js 2>/dev/null || tar -czf ../frontend.tar.gz "$HTML_FILE"
+          else
+            echo "❌ HTML file not found: $HTML_FILE"
+            exit 1
+          fi
+
           cd ..
           echo "✅ Frontend package created:"
           ls -la frontend.tar.gz
+
+          # Verify package contents
+          echo "📋 Package contents:"
+          tar -tzf frontend.tar.gz
 
       - name: Transfer frontend files to server
         uses: appleboy/scp-action@v0.1.4
