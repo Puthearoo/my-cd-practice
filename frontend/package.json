@@ -1,0 +1,16 @@
+{
+  "name": "frontend",
+  "version": "1.0.0",
+  "description": "Frontend for full-stack demo",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx serve -s . -p 8080",
+    "dev": "npx live-server --port=8080",
+    "test": "echo \"No tests found\" && exit 0",
+    "build": "echo \"No build process needed for static files\""
+  },
+  "devDependencies": {
+    "live-server": "^1.2.2",
+    "serve": "^14.2.5"
+  }
+}
