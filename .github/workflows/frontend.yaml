@@ -64,15 +64,17 @@ jobs:
       - name: Create deployment package
         run: |
           echo "📦 Packaging frontend files..."
-          cd frontend
-          # Package all frontend files except node_modules and hidden files
-          tar -czf ../frontend.tar.gz . \
-            --exclude='node_modules' \
-            --exclude='.git*' \
-            --exclude='.github' \
-            --exclude='.DS_Store'
-          cd ..
-          ls -lh frontend.tar.gz
+             cd frontend
+             tar -czf ../frontend.tar.gz \
+             index.html \
+             styles.css \
+             script.js \
+             package.json \
+             package-lock.json
+             cd ..
+             ls -lh frontend.tar.gz
+             echo "📦 Package contents:"
+             tar -tzf frontend.tar.gz
 
       - name: Upload frontend package
         uses: appleboy/scp-action@v0.1.4
