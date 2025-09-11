@@ -1,20 +1,48 @@
-name: CI/CD Backend Deployment
+name: Backend CI/CD
 
 on:
   push:
-    branches: [test-workflow] # adjust branch if needed
+    branches: [test-workflow]
+  pull_request:
+    branches: [main]
 
 jobs:
-  deploy-backend:
+  test:
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          npm ci
+
+      - name: Run tests
+        run: |
+          cd backend
+          npm test
+        env:
+          NODE_ENV: test
+          TEST_DB_URL: ${{ secrets.TEST_DATABASE_URL }}
+
+  deploy:
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test-workflow'
+    needs: test
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Create deployment package
         run: |
-          echo "📦 Packaging backend files..."
           tar -czf backend.tar.gz backend/
           ls -lh backend.tar.gz
 
@@ -38,23 +66,27 @@ jobs:
           script: |
             set -e
             APP_DIR="/home/roo/my-cd-practice/backend"
+            PM2_APP_NAME="backend-app"
 
             echo "🚀 Deploying backend to $APP_DIR"
-
-            # Ensure backend directory exists
             mkdir -p $APP_DIR
-
-            # Clean old files
-            rm -rf $APP_DIR/*
-
-            # Extract new files
             tar -xzf /tmp/backend.tar.gz -C /home/roo/my-cd-practice
             rm -f /tmp/backend.tar.gz
 
             cd $APP_DIR
-
             echo "📦 Installing dependencies..."
             npm install --production
 
             echo "🔄 Restarting backend with PM2..."
+            # Install PM2 if not exists
+            if ! command -v pm2 &> /dev/null; then
+                npm install -g pm2
+            fi
+
+            # Start or restart the application
+            pm2 delete $PM2_APP_NAME 2>/dev/null || true
+            pm2 start ecosystem.config.js --name $PM2_APP_NAME
+            pm2 save
+            pm2 startup 2>/dev/null || true
+
             echo "✅ Backend deployed successfully!"

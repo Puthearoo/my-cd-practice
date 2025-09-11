@@ -1,32 +1,59 @@
-name: CI/CD Frontend Deployment
+name: Frontend CI/CD
 
 on:
   push:
-    branches: [test-workflow] # adjust branch if needed
+    branches: [test-workflow]
+  pull_request:
+    branches: [main]
 
 jobs:
-  deploy-frontend:
+  test:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Verify HTML files
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
         run: |
-          echo "📄 Checking for frontend files..."
-          if [ -f "index.html" ]; then
-            echo "✅ Found index.html in root"
-          else
-            echo "❌ index.html not found, packaging might fail"
-            exit 1
-          fi
+          cd frontend
+          npm ci
+
+      - name: Run tests
+        run: |
+          cd frontend
+          npm test -- --coverage --watchAll=false
+
+      - name: Build application
+        run: |
+          cd frontend
+          npm run build
+
+  deploy:
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test-workflow'
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm install
+          npm run build
 
       - name: Create deployment package
         run: |
-          echo "📦 Packaging frontend files..."
-          tar -czf frontend.tar.gz index.html *.css *.js 2>/dev/null || \
-          (echo "Fallback: Packaging only index.html" && tar -czf frontend.tar.gz index.html)
+          cd frontend/build
+          tar -czf ../../frontend.tar.gz .
+          cd ../..
           ls -lh frontend.tar.gz
 
       - name: Upload frontend package
@@ -48,23 +75,14 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           script: |
             set -e
-            FRONT_DIR="/home/roo/frontend-test"
+            FRONT_DIR="/var/www/html"
+            NGINX_CONFIG="/etc/nginx/sites-available/default"
 
             echo "🚀 Deploying frontend to $FRONT_DIR"
-
-            # Ensure frontend directory exists
-            mkdir -p $FRONT_DIR
-
-            # Clean old files
-            rm -rf $FRONT_DIR/*
-
-            # Extract new files
-            tar -xzf /tmp/frontend.tar.gz -C $FRONT_DIR
+            sudo mkdir -p $FRONT_DIR
+            sudo tar -xzf /tmp/frontend.tar.gz -C $FRONT_DIR
+            sudo chown -R www-data:www-data $FRONT_DIR
+            sudo chmod -R 755 $FRONT_DIR
+            sudo systemctl restart nginx
             rm -f /tmp/frontend.tar.gz
-
-            # Permissions
-            chmod -R 755 $FRONT_DIR
-            chown -R $USER:$USER $FRONT_DIR || true
-
             echo "✅ Frontend deployed successfully!"
-            echo "🌐 Website available at: http://${{ secrets.SSH_HOST }}"
