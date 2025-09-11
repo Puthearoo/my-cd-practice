@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Full-Stack Demo</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Full-Stack Demo Application</h1>
+            <p>Connected to Backend API</p>
+        </header>
+
+        <section class="health-check">
+            <h2>API Health Check</h2>
+            <button onclick="checkHealth()">Check Backend</button>
+            <div id="health-output" class="output"></div>
+        </section>
+
+        <section class="users-section">
+            <h2>User Management</h2>
+            
+            <div class="add-user">
+                <h3>Add New User</h3>
+                <input type="text" id="name" placeholder="Name" required>
+                <input type="email" id="email" placeholder="Email" required>
+                <button onclick="addUser()">Add User</button>
+                <div id="add-output" class="output"></div>
+            </div>
+
+            <div class="users-list">
+                <h3>Users List</h3>
+                <button onclick="loadUsers()">Refresh Users</button>
+                <table id="users-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="users-body">
+                        <!-- Users will be loaded here -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
