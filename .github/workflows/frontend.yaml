@@ -29,18 +29,24 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: "18"
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
+          # REMOVE the cache line since we don't have package-lock.json in root
+          # cache: "npm"
+          # cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
         run: |
           cd frontend
-          npm ci
+          npm install
 
       - name: Run tests (if any)
         run: |
           cd frontend
-          npm test -- --watchAll=false || echo "No tests found, continuing..."
+          # Run tests if they exist, otherwise continue
+          if [ -f "test.js" ] || [ -f "__tests__" ]; then
+            npm test -- --watchAll=false
+          else
+            echo "No tests found, skipping test execution"
+          fi
 
   deploy:
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test-workflow'
@@ -59,11 +65,12 @@ jobs:
         run: |
           echo "📦 Packaging frontend files..."
           cd frontend
-          # Package all frontend files except node_modules
+          # Package all frontend files except node_modules and hidden files
           tar -czf ../frontend.tar.gz . \
             --exclude='node_modules' \
-            --exclude='.git' \
-            --exclude='.github'
+            --exclude='.git*' \
+            --exclude='.github' \
+            --exclude='.DS_Store'
           cd ..
           ls -lh frontend.tar.gz
 
@@ -91,9 +98,9 @@ jobs:
             echo "🚀 Deploying frontend to $FRONT_DIR"
             sudo mkdir -p $FRONT_DIR
 
-            # Clean existing files except hidden files
-            sudo find $FRONT_DIR -maxdepth 1 -type f -delete
-            sudo find $FRONT_DIR -maxdepth 1 -type l -delete
+            # Clean existing files (keep hidden files like .htaccess)
+            sudo find $FRONT_DIR -maxdepth 1 -type f ! -name '.*' -delete
+            sudo find $FRONT_DIR -maxdepth 1 -type l ! -name '.*' -delete
 
             # Extract new files
             sudo tar -xzf /tmp/frontend.tar.gz -C $FRONT_DIR
@@ -107,4 +114,18 @@ jobs:
             rm -f /tmp/frontend.tar.gz
 
             echo "✅ Frontend deployed successfully!"
-            echo "🌐 Website available at: http://$(curl -s ifconfig.me)"
+            echo "🌐 Website available at: http://$(hostname -I | awk '{print $1}')"
+
+      - name: Verify deployment
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            echo "🔍 Verifying deployment..."
+            ls -la /var/www/html/
+            echo "📄 Index.html content:"
+            head -n 10 /var/www/html/index.html
+            echo "✅ Deployment verification complete"
