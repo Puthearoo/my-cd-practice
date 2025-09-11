@@ -2,9 +2,10 @@ name: Frontend CI/CD
 
 on:
   push:
-    branches: [test-workflow]
+    branches: [test-workflow, main, development] # Add your working branches
   pull_request:
     branches: [main]
+  workflow_dispatch: # Manual trigger
 
 jobs:
   test:
@@ -47,7 +48,7 @@ jobs:
           fi
 
   deploy:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test-workflow'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test-workflow' || github.ref == 'refs/heads/development'
     needs: test
     runs-on: ubuntu-latest
     steps:
@@ -67,7 +68,6 @@ jobs:
         run: |
           echo "📦 Packaging frontend files..."
           cd frontend
-          # Package only the essential files
           tar -czf ../frontend.tar.gz \
             index.html \
             styles.css \
@@ -76,8 +76,6 @@ jobs:
             package-lock.json 2>/dev/null || true
           cd ..
           ls -lh frontend.tar.gz
-          echo "📦 Package contents:"
-          tar -tzf frontend.tar.gz
 
       - name: Upload frontend package
         uses: appleboy/scp-action@v0.1.4
@@ -101,43 +99,12 @@ jobs:
             FRONT_DIR="/var/www/html"
 
             echo "🚀 Deploying frontend to $FRONT_DIR"
-
-            # Create directory if it doesn't exist
             sudo mkdir -p $FRONT_DIR
-
-            # Clean existing files (keep hidden files like .htaccess)
             sudo find $FRONT_DIR -maxdepth 1 -type f ! -name '.*' -delete || true
             sudo find $FRONT_DIR -maxdepth 1 -type l ! -name '.*' -delete || true
-
-            # Extract new files
             sudo tar -xzf /tmp/frontend.tar.gz -C $FRONT_DIR
-
-            # Set proper permissions
             sudo chown -R www-data:www-data $FRONT_DIR
             sudo chmod -R 755 $FRONT_DIR
-
-            # Restart nginx
             sudo systemctl restart nginx
-
-            # Cleanup
             rm -f /tmp/frontend.tar.gz
-
             echo "✅ Frontend deployed successfully!"
-            echo "🌐 Website available at: http://$(curl -s ifconfig.me || hostname -I | awk '{print $1}')"
-
-      - name: Verify deployment
-        uses: appleboy/ssh-action@v0.1.10
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SSH_PORT }}
-          script: |
-            echo "🔍 Verifying deployment..."
-            echo "📁 Directory contents:"
-            ls -la /var/www/html/
-            echo "📄 Index.html first few lines:"
-            head -n 5 /var/www/html/index.html
-            echo "🌐 Nginx status:"
-            sudo systemctl status nginx --no-pager
-            echo "✅ Deployment verification complete"
