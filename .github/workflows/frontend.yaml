@@ -16,12 +16,10 @@ jobs:
       - name: Verify frontend files
         run: |
           echo "📄 Checking frontend files..."
-          if [ -f "frontend/index.html" ]; then
-            echo "✅ Found index.html"
-            echo "✅ Found styles.css"
-            echo "✅ Found script.js"
+          if [ -f "frontend/index.html" ] && [ -f "frontend/styles.css" ] && [ -f "frontend/script.js" ]; then
+            echo "✅ All essential frontend files found"
           else
-            echo "❌ Frontend files not found"
+            echo "❌ Missing essential frontend files"
             exit 1
           fi
 
@@ -29,20 +27,20 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: "18"
-          # REMOVE the cache line since we don't have package-lock.json in root
-          # cache: "npm"
-          # cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
         run: |
           cd frontend
-          npm install
+          if [ -f "package.json" ]; then
+            npm install
+          else
+            echo "⚠️ package.json not found, skipping npm install"
+          fi
 
       - name: Run tests (if any)
         run: |
           cd frontend
-          # Run tests if they exist, otherwise continue
-          if [ -f "test.js" ] || [ -f "__tests__" ]; then
+          if [ -f "package.json" ] && npm run test --dry-run >/dev/null 2>&1; then
             npm test -- --watchAll=false
           else
             echo "No tests found, skipping test execution"
@@ -59,22 +57,27 @@ jobs:
       - name: Install dependencies
         run: |
           cd frontend
-          npm install
+          if [ -f "package.json" ]; then
+            npm install
+          else
+            echo "No package.json found, skipping npm install"
+          fi
 
       - name: Create deployment package
         run: |
           echo "📦 Packaging frontend files..."
-             cd frontend
-             tar -czf ../frontend.tar.gz \
-             index.html \
-             styles.css \
-             script.js \
-             package.json \
-             package-lock.json
-             cd ..
-             ls -lh frontend.tar.gz
-             echo "📦 Package contents:"
-             tar -tzf frontend.tar.gz
+          cd frontend
+          # Package only the essential files
+          tar -czf ../frontend.tar.gz \
+            index.html \
+            styles.css \
+            script.js \
+            package.json \
+            package-lock.json 2>/dev/null || true
+          cd ..
+          ls -lh frontend.tar.gz
+          echo "📦 Package contents:"
+          tar -tzf frontend.tar.gz
 
       - name: Upload frontend package
         uses: appleboy/scp-action@v0.1.4
@@ -98,14 +101,18 @@ jobs:
             FRONT_DIR="/var/www/html"
 
             echo "🚀 Deploying frontend to $FRONT_DIR"
+
+            # Create directory if it doesn't exist
             sudo mkdir -p $FRONT_DIR
 
             # Clean existing files (keep hidden files like .htaccess)
-            sudo find $FRONT_DIR -maxdepth 1 -type f ! -name '.*' -delete
-            sudo find $FRONT_DIR -maxdepth 1 -type l ! -name '.*' -delete
+            sudo find $FRONT_DIR -maxdepth 1 -type f ! -name '.*' -delete || true
+            sudo find $FRONT_DIR -maxdepth 1 -type l ! -name '.*' -delete || true
 
             # Extract new files
             sudo tar -xzf /tmp/frontend.tar.gz -C $FRONT_DIR
+
+            # Set proper permissions
             sudo chown -R www-data:www-data $FRONT_DIR
             sudo chmod -R 755 $FRONT_DIR
 
@@ -116,7 +123,7 @@ jobs:
             rm -f /tmp/frontend.tar.gz
 
             echo "✅ Frontend deployed successfully!"
-            echo "🌐 Website available at: http://$(hostname -I | awk '{print $1}')"
+            echo "🌐 Website available at: http://$(curl -s ifconfig.me || hostname -I | awk '{print $1}')"
 
       - name: Verify deployment
         uses: appleboy/ssh-action@v0.1.10
@@ -127,7 +134,10 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           script: |
             echo "🔍 Verifying deployment..."
+            echo "📁 Directory contents:"
             ls -la /var/www/html/
-            echo "📄 Index.html content:"
-            head -n 10 /var/www/html/index.html
+            echo "📄 Index.html first few lines:"
+            head -n 5 /var/www/html/index.html
+            echo "🌐 Nginx status:"
+            sudo systemctl status nginx --no-pager
             echo "✅ Deployment verification complete"
