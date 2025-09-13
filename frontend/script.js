@@ -1,4 +1,4 @@
-const API_BASE = 'http://localhost:3000'; // Change this to your backend URL
+const API_BASE = 'http://localhost:3000';
 
 // Health check function
 async function checkHealth() {
